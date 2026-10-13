@@ -67,3 +67,18 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Compiled executable files
+*.exe
+
+# Object files
+*.o
+*.obj
+
+# CUDA compiled files
+*.ptx
+*.cubin
+*.fatbin
+
+# Temporary files
+*.tmp
