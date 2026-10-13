@@ -57,7 +57,6 @@ int main() {
     for (int generation = 0; generation < ITERATIONS; ++generation) {
         nextGeneration(current, next);
         current.swap(next);
-        next.assign(SIZE, vector<int>(SIZE, 0));
     }
 
     auto end = chrono::high_resolution_clock::now();
