@@ -10,12 +10,15 @@ Architecture:
       * Partitions 2 & 3: CPU Running Process Canvas (Electric Cyan Theme)
       * Partitions 4 & 5: CUDA Running Process Canvas (Emerald Green Theme - Real CUDA GPU)
   - Merged Section (Spanning columns 2 to 5):
-      * Real-time Performance Telemetry Paragraph detailing iterations per unit time,
-        with CPU in Cyan and CUDA in Green.
+      * Real-time Comparison Line Chart:
+          - X-Axis: Elapsed Time (s)
+          - Y-Axis: No. of Iterations for Unit Time (iters/s)
+          - CPU Curve in Blue (#00d4ff)
+          - CUDA Curve in Green (#10b981)
+          - Dual Engine Progress Bars
   - High Performance Computing (HPC) Asynchronous Acceleration:
       * Direct NVIDIA CUDA Driver Engine executing on NVIDIA GeForce GPUs (RTX 3050).
-      * Decoupled asynchronous threads with GPU hardware multi-stepping (5x - 20x),
-        allowing users to visually witness the massive speed advantage over the CPU.
+      * Decoupled asynchronous threads with GPU hardware multi-stepping (5x - 20x).
       * If CUDA is not found, displays "CUDA is not found" directly on the canvas.
 """
 
@@ -30,7 +33,7 @@ import os
 import ctypes
 
 # --- Color Scheme & Aesthetics ---
-COLOR_CPU        = "#00d4ff"   # Electric Cyan for CPU
+COLOR_CPU        = "#00d4ff"   # Electric Cyan / Blue for CPU
 COLOR_CPU_DIM    = "#0284c7"
 COLOR_CUDA       = "#10b981"   # Emerald Green for CUDA
 COLOR_CUDA_DIM   = "#059669"
@@ -50,11 +53,11 @@ COLOR_DANGER     = "#ef4444"   # Red for CUDA Not Available
 COLOR_WARNING    = "#f59e0b"   # Amber for Paused
 
 # --- Grid Specifications ---
-CANVAS_COLS = 50
-CANVAS_ROWS = 36
-CELL_SIZE   = 9
-CANVAS_W    = CANVAS_COLS * CELL_SIZE  # 450 px
-CANVAS_H    = CANVAS_ROWS * CELL_SIZE  # 324 px
+CANVAS_COLS = 44
+CANVAS_ROWS = 28
+CELL_SIZE   = 8
+CANVAS_W    = CANVAS_COLS * CELL_SIZE  # 352 px
+CANVAS_H    = CANVAS_ROWS * CELL_SIZE  # 224 px
 FRAME_MS    = 25
 
 # --- Presets Dictionary ---
@@ -425,11 +428,196 @@ def run_cpu_benchmark(rows=1000, cols=1000, iterations=100):
     }
 
 
+# =============================================================================
+# REAL-TIME COMPARISON LINE CHART COMPONENT
+# =============================================================================
+class RealtimeComparisonChart(tk.Canvas):
+    """
+    High-Performance Real-Time Canvas Line Chart.
+    Plots 'No. of Iterations for Unit Time (iters/s)' on the Y-Axis vs 'Elapsed Time (seconds)' on the X-Axis.
+    - CPU Line: Electric Blue (#00d4ff)
+    - CUDA Line: Emerald Green (#10b981)
+    """
+
+    def __init__(self, parent, height=185, bg="#0a0e17"):
+        super().__init__(
+            parent, height=height, bg=bg,
+            highlightthickness=1, highlightbackground=COLOR_BORDER
+        )
+        self.w = 700
+        self.h = height
+        self.margin_l = 65
+        self.margin_r = 30
+        self.margin_t = 22
+        self.margin_b = 28
+        self.plot_w = max(100, self.w - self.margin_l - self.margin_r)
+        self.plot_h = max(50, self.h - self.margin_t - self.margin_b)
+
+        self.times = []
+        self.cpu_pts = []
+        self.cuda_pts = []
+        self.cuda_completed_at = None
+
+        self.bind("<Configure>", self._on_resize)
+        self.redraw()
+
+    def _on_resize(self, event):
+        if event.width > 100 and event.height > 60:
+            self.w = event.width
+            self.h = event.height
+            self.plot_w = max(100, self.w - self.margin_l - self.margin_r)
+            self.plot_h = max(50, self.h - self.margin_t - self.margin_b)
+            self.redraw()
+
+    def reset(self):
+        self.times.clear()
+        self.cpu_pts.clear()
+        self.cuda_pts.clear()
+        self.cuda_completed_at = None
+        self.redraw()
+
+    def add_point(self, t, cpu_val, cuda_val):
+        self.times.append(float(t))
+        self.cpu_pts.append(max(0.0, float(cpu_val)))
+        self.cuda_pts.append(max(0.0, float(cuda_val)))
+        self.redraw()
+
+    def mark_cuda_completed(self, t):
+        self.cuda_completed_at = float(t)
+        self.redraw()
+
+    def redraw(self):
+        self.delete("all")
+        x0 = self.margin_l
+        y0 = self.margin_t
+        x1 = self.w - self.margin_r
+        y1 = self.h - self.margin_b
+
+        # Y scale calculation (iterations per unit time)
+        max_y = 50.0
+        if self.cpu_pts or self.cuda_pts:
+            max_data = max(max(self.cpu_pts or [0]), max(self.cuda_pts or [0]))
+            max_y = max(max_y, max_data * 1.20)
+
+        # Round max_y to nice clean interval
+        if max_y <= 50:
+            max_y = ((int(max_y) + 9) // 10) * 10
+        elif max_y <= 150:
+            max_y = ((int(max_y) + 24) // 25) * 25
+        elif max_y <= 500:
+            max_y = ((int(max_y) + 49) // 50) * 50
+        else:
+            max_y = ((int(max_y) + 99) // 100) * 100
+        max_y = max(max_y, 40)
+
+        # X scale calculation (time in seconds)
+        max_x = max(self.times[-1] if self.times else 5.0, 5.0)
+
+        # Horizontal grid lines and Y-axis numbers
+        num_y_ticks = 5 if self.plot_h >= 120 else 4
+        for i in range(num_y_ticks + 1):
+            val = int(max_y * i / num_y_ticks)
+            y = y1 - (val / max_y) * self.plot_h
+            # Grid dashed line
+            self.create_line(x0, y, x1, y, fill="#1c2536", dash=(2, 4))
+            # Number label
+            self.create_text(x0 - 8, y, text=f"{val:,}", fill="#8b949e", font=("Segoe UI", 8), anchor="e")
+
+        # Y-Axis Header Title
+        self.create_text(x0 - 8, y0 - 10, text="iters / sec", fill=COLOR_MUTED, font=("Segoe UI", 8, "bold"), anchor="e")
+
+        # Vertical grid lines and X-axis numbers
+        step_x = max(1.0, round(max_x / 5, 1))
+        t = 0.0
+        while t <= max_x + 0.05:
+            x = x0 + (t / max_x) * self.plot_w
+            self.create_line(x, y0, x, y1, fill="#1c2536", dash=(2, 4))
+            self.create_text(x, y1 + 12, text=f"{t:.1f}s", fill="#8b949e", font=("Segoe UI", 8))
+            t += step_x
+
+        # X-Axis Header Title
+        self.create_text(x1, y1 + 12, text="Time (s)", fill=COLOR_MUTED, font=("Segoe UI", 8, "bold"), anchor="e")
+
+        # Axes baseline borders
+        self.create_line(x0, y0 - 4, x0, y1, fill="#374151", width=1.5)
+        self.create_line(x0, y1, x1 + 4, y1, fill="#374151", width=1.5)
+
+        # If simulation has not started yet, show an inviting prompt
+        if len(self.times) == 0:
+            cx = (x0 + x1) / 2
+            cy = (y0 + y1) / 2
+            self.create_rectangle(cx - 210, cy - 16, cx + 210, cy + 16, fill="#111827", outline="#1f2937", width=1)
+            self.create_text(
+                cx, cy,
+                text="▶ Click [ START SIMULATION ] to plot real-time CPU vs CUDA performance curves",
+                fill="#94a3b8", font=("Segoe UI", 8, "bold")
+            )
+            return
+
+        # Plot CPU Curve (Blue #00d4ff)
+        if len(self.times) == 1:
+            cx = x0 + (self.times[0] / max_x) * self.plot_w
+            cy = y1 - (self.cpu_pts[0] / max_y) * self.plot_h
+            self.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill=COLOR_CPU, outline="#ffffff")
+        elif len(self.times) >= 2:
+            cpu_coords = []
+            for t_val, c_val in zip(self.times, self.cpu_pts):
+                cx = x0 + (t_val / max_x) * self.plot_w
+                cy = y1 - (c_val / max_y) * self.plot_h
+                cpu_coords.extend([cx, cy])
+            # Draw line with width=3
+            self.create_line(*cpu_coords, fill=COLOR_CPU, width=3, smooth=True)
+            # Accent nodes along line
+            stride = max(1, len(self.times) // 15)
+            for idx in range(0, len(self.times), stride):
+                nx = x0 + (self.times[idx] / max_x) * self.plot_w
+                ny = y1 - (self.cpu_pts[idx] / max_y) * self.plot_h
+                self.create_oval(nx - 2, ny - 2, nx + 2, ny + 2, fill="#0284c7", outline=COLOR_CPU)
+            # Glowing dot on latest point
+            last_x = cpu_coords[-2]
+            last_y = cpu_coords[-1]
+            self.create_oval(last_x - 5, last_y - 5, last_x + 5, last_y + 5, fill=COLOR_CPU, outline="#ffffff", width=1.5)
+
+        # Plot CUDA Curve (Green #10b981)
+        if len(self.times) == 1:
+            cx = x0 + (self.times[0] / max_x) * self.plot_w
+            cy = y1 - (self.cuda_pts[0] / max_y) * self.plot_h
+            self.create_oval(cx - 3, cy - 3, cx + 3, cy + 3, fill=COLOR_CUDA, outline="#ffffff")
+        elif len(self.times) >= 2:
+            cuda_coords = []
+            for t_val, cu_val in zip(self.times, self.cuda_pts):
+                cx = x0 + (t_val / max_x) * self.plot_w
+                cy = y1 - (cu_val / max_y) * self.plot_h
+                cuda_coords.extend([cx, cy])
+            # Draw line with width=3
+            self.create_line(*cuda_coords, fill=COLOR_CUDA, width=3, smooth=True)
+            # Accent nodes along line
+            stride = max(1, len(self.times) // 15)
+            for idx in range(0, len(self.times), stride):
+                nx = x0 + (self.times[idx] / max_x) * self.plot_w
+                ny = y1 - (self.cuda_pts[idx] / max_y) * self.plot_h
+                self.create_oval(nx - 2, ny - 2, nx + 2, ny + 2, fill="#059669", outline=COLOR_CUDA)
+            # Glowing dot on latest point
+            last_x = cuda_coords[-2]
+            last_y = cuda_coords[-1]
+            self.create_oval(last_x - 5, last_y - 5, last_x + 5, last_y + 5, fill=COLOR_CUDA, outline="#ffffff", width=1.5)
+
+        # Milestone: If CUDA finished, draw completion flag
+        if self.cuda_completed_at is not None:
+            mx = x0 + (self.cuda_completed_at / max_x) * self.plot_w
+            self.create_line(mx, y0, mx, y1, fill="#10b981", dash=(3, 3), width=1)
+            self.create_rectangle(mx - 38, y0, mx + 38, y0 + 15, fill="#064e3b", outline="#10b981")
+            self.create_text(mx, y0 + 7, text=f"CUDA {self.cuda_completed_at:.1f}s ✓", fill="#6ee7b7", font=("Segoe UI", 7, "bold"))
+
+
+# =============================================================================
+# MAIN DUAL ENGINE APP WINDOW
+# =============================================================================
 class DualGameOfLifeApp(tk.Tk):
     """
     Dual Engine HPC Visualizer for Conway's Game of Life.
     Displays side-by-side CPU and CUDA canvases with 5 vertical partitions
-    and a merged performance telemetry section.
+    and a real-time Comparison Line Chart (iters/s vs Time).
     """
 
     def __init__(self):
@@ -437,7 +625,6 @@ class DualGameOfLifeApp(tk.Tk):
 
         self.title("HPC - Conway's Game of Life: Dual Engine CPU vs CUDA")
         self.configure(bg=COLOR_BG_DARK)
-        self.resizable(False, False)
 
         # Simulation grid dimensions
         self.rows = CANVAS_ROWS
@@ -510,11 +697,22 @@ class DualGameOfLifeApp(tk.Tk):
 
         # Update initial text and stats
         self._update_all_stats()
-        self._update_telemetry_paragraph()
         self._refresh_loop()
 
         # Clean thread termination on close
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # Center window on screen and enable responsive resizing
+        self.update_idletasks()
+        w = self.winfo_reqwidth()
+        h = self.winfo_reqheight()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = max(10, (sw - w) // 2)
+        y = max(10, (sh - h) // 2 - 20)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+        self.minsize(960, 500)
+        self.resizable(True, True)
 
     # =========================================================================
     # 1. TOP HEADER (Stats, CUDA Availability Status Pill, Start Button)
@@ -581,7 +779,7 @@ class DualGameOfLifeApp(tk.Tk):
 
     def _make_header_stat(self, parent, title, val, color):
         frame = tk.Frame(parent, bg=COLOR_PANEL, padx=12)
-        frame.pack(side="left")
+        frame.pack(side="left", expand=True)
         tk.Label(frame, text=title, font=("Segoe UI", 8, "bold"),
                  fg=COLOR_MUTED, bg=COLOR_PANEL).pack()
         lbl = tk.Label(frame, text=val, font=("Courier New", 12, "bold"),
@@ -597,38 +795,39 @@ class DualGameOfLifeApp(tk.Tk):
     # =========================================================================
     def _build_body_partitions(self):
         body_container = tk.Frame(self, bg=COLOR_BG_DARK)
-        body_container.pack(fill="x", padx=12, pady=(0, 8))
+        body_container.pack(fill="both", expand=True, padx=12, pady=(0, 6))
 
         # Configure 5 vertical columns
-        body_container.columnconfigure(0, weight=1, minsize=240)  # Part 1: Settings
+        body_container.columnconfigure(0, weight=0, minsize=240)  # Part 1: Settings
         body_container.columnconfigure(1, weight=1)              # Part 2: CPU Left
         body_container.columnconfigure(2, weight=1)              # Part 3: CPU Right
         body_container.columnconfigure(3, weight=1)              # Part 4: CUDA Left
         body_container.columnconfigure(4, weight=1)              # Part 5: CUDA Right
+        body_container.rowconfigure(0, weight=1)
 
         # -------------------------------------------------------------
         # PART 1: Settings Panel (Partition 1)
         # -------------------------------------------------------------
-        settings_card = tk.Frame(body_container, bg=COLOR_PANEL, padx=14, pady=10,
+        settings_card = tk.Frame(body_container, bg=COLOR_PANEL, padx=12, pady=6,
                                  highlightbackground=COLOR_BORDER, highlightthickness=1)
-        settings_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        settings_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
         tk.Label(settings_card, text="⚙  SIMULATION SETTINGS",
                  font=("Courier New", 9, "bold"),
-                 fg=COLOR_CPU, bg=COLOR_PANEL).pack(anchor="w", pady=(0, 8))
+                 fg=COLOR_CPU, bg=COLOR_PANEL).pack(anchor="w", pady=(0, 4))
 
-        # No. of Iterations
+        # Target Iterations
         tk.Label(settings_card, text="Target Iterations:",
                  font=("Segoe UI", 8, "bold"),
                  fg=COLOR_TEXT, bg=COLOR_PANEL).pack(anchor="w")
 
         self.iter_var = tk.IntVar(value=500)
         iter_spin = tk.Spinbox(settings_card, from_=10, to=100000, increment=50,
-                               textvariable=self.iter_var, font=("Segoe UI", 9, "bold"),
+                               textvariable=self.iter_var, font=("Segoe UI", 8, "bold"),
                                bg=COLOR_CARD, fg=COLOR_TEXT, buttonbackground=COLOR_BORDER,
                                relief="flat", highlightthickness=1, highlightcolor=COLOR_CPU,
                                highlightbackground=COLOR_BORDER)
-        iter_spin.pack(fill="x", pady=(2, 6))
+        iter_spin.pack(fill="x", pady=(1, 4))
         self.iter_var.trace_add("write", lambda *_: self._update_target_display())
 
         # GPU Acceleration Multiplier
@@ -644,9 +843,21 @@ class DualGameOfLifeApp(tk.Tk):
             "1x Lockstep (1:1 Synchronized)"
         ]
         boost_cb = ttk.Combobox(settings_card, textvariable=self.gpu_boost_var,
-                                values=boost_options, state="readonly")
-        boost_cb.pack(fill="x", pady=(2, 6))
+                                values=boost_options, state="readonly", font=("Segoe UI", 8))
+        boost_cb.pack(fill="x", pady=(1, 4))
         boost_cb.bind("<<ComboboxSelected>>", self._on_gpu_boost_changed)
+
+        # Initial Preset Patterns
+        tk.Label(settings_card, text="Preset Pattern:",
+                 font=("Segoe UI", 8, "bold"),
+                 fg=COLOR_TEXT, bg=COLOR_PANEL).pack(anchor="w")
+
+        preset_options = ["Random (30% Density)"] + list(PRESETS.keys())
+        self.preset_var = tk.StringVar(value="Random (30% Density)")
+        preset_cb = ttk.Combobox(settings_card, textvariable=self.preset_var,
+                                 values=preset_options, state="readonly", font=("Segoe UI", 8))
+        preset_cb.pack(fill="x", pady=(1, 4))
+        preset_cb.bind("<<ComboboxSelected>>", self._on_preset_selected)
 
         # Speed / Delay Slider
         tk.Label(settings_card, text="Base Animation Speed:",
@@ -658,60 +869,35 @@ class DualGameOfLifeApp(tk.Tk):
                                variable=self.speed_var, bg=COLOR_PANEL, fg=COLOR_CPU,
                                troughcolor=COLOR_CARD, highlightthickness=0,
                                sliderrelief="flat", showvalue=False)
-        speed_scale.pack(fill="x", pady=(2, 6))
+        speed_scale.pack(fill="x", pady=(1, 4))
         self.speed_var.trace_add("write", lambda *_: self._on_speed_changed())
 
-        # Initial Preset Patterns
-        tk.Label(settings_card, text="Preset Pattern:",
-                 font=("Segoe UI", 8, "bold"),
-                 fg=COLOR_TEXT, bg=COLOR_PANEL).pack(anchor="w")
+        # Control Action Buttons (2x2 Grid)
+        btn_grid = tk.Frame(settings_card, bg=COLOR_PANEL)
+        btn_grid.pack(fill="x", pady=(4, 0))
 
-        preset_options = ["Random (30% Density)"] + list(PRESETS.keys())
-        self.preset_var = tk.StringVar(value="Random (30% Density)")
-        preset_cb = ttk.Combobox(settings_card, textvariable=self.preset_var,
-                                 values=preset_options, state="readonly")
-        preset_cb.pack(fill="x", pady=(2, 8))
-        preset_cb.bind("<<ComboboxSelected>>", self._on_preset_selected)
-
-        # Control Action Buttons
-        tk.Label(settings_card, text="Grid Actions:",
-                 font=("Segoe UI", 8, "bold"),
-                 fg=COLOR_TEXT, bg=COLOR_PANEL).pack(anchor="w", pady=(2, 2))
-
-        btn_row1 = tk.Frame(settings_card, bg=COLOR_PANEL)
-        btn_row1.pack(fill="x", pady=2)
-
-        self.btn_step = tk.Button(btn_row1, text="⏭ Step 1x", font=("Segoe UI", 8, "bold"),
+        self.btn_step = tk.Button(btn_grid, text="⏭ Step 1x", font=("Segoe UI", 8, "bold"),
                                   bg="#3b82f6", fg="#ffffff", relief="flat", cursor="hand2",
                                   command=self._on_step)
-        self.btn_step.pack(side="left", fill="x", expand=True, padx=(0, 2))
+        self.btn_step.grid(row=0, column=0, sticky="ew", padx=(0, 2), pady=1)
 
-        self.btn_sync = tk.Button(btn_row1, text="🔄 Sync Grids", font=("Segoe UI", 8, "bold"),
+        self.btn_sync = tk.Button(btn_grid, text="🔄 Sync Grids", font=("Segoe UI", 8, "bold"),
                                   bg="#8b5cf6", fg="#ffffff", relief="flat", cursor="hand2",
                                   command=self._on_sync_grids)
-        self.btn_sync.pack(side="left", fill="x", expand=True, padx=(2, 0))
+        self.btn_sync.grid(row=0, column=1, sticky="ew", padx=(2, 0), pady=1)
 
-        btn_row2 = tk.Frame(settings_card, bg=COLOR_PANEL)
-        btn_row2.pack(fill="x", pady=2)
-
-        self.btn_reset = tk.Button(btn_row2, text="🎲 Randomize", font=("Segoe UI", 8, "bold"),
+        self.btn_reset = tk.Button(btn_grid, text="🎲 Randomize", font=("Segoe UI", 8, "bold"),
                                    bg=COLOR_BORDER, fg=COLOR_TEXT, relief="flat", cursor="hand2",
                                    command=self._on_reset)
-        self.btn_reset.pack(side="left", fill="x", expand=True, padx=(0, 2))
+        self.btn_reset.grid(row=1, column=0, sticky="ew", padx=(0, 2), pady=1)
 
-        self.btn_clear = tk.Button(btn_row2, text="🗑 Clear", font=("Segoe UI", 8, "bold"),
+        self.btn_clear = tk.Button(btn_grid, text="🗑 Clear", font=("Segoe UI", 8, "bold"),
                                    bg="#475569", fg="#ffffff", relief="flat", cursor="hand2",
                                    command=self._on_clear)
-        self.btn_clear.pack(side="left", fill="x", expand=True, padx=(2, 0))
+        self.btn_clear.grid(row=1, column=1, sticky="ew", padx=(2, 0), pady=1)
 
-        # Instructions / Canvas drawing hint
-        hint_box = tk.Frame(settings_card, bg=COLOR_CARD, padx=8, pady=4,
-                            highlightbackground=COLOR_BORDER, highlightthickness=1)
-        hint_box.pack(fill="x", pady=(6, 0))
-        tk.Label(hint_box, text="⚡ Real GPU Power Notice:", font=("Segoe UI", 8, "bold"),
-                 fg=COLOR_CUDA, bg=COLOR_CARD).pack(anchor="w")
-        tk.Label(hint_box, text="CUDA runs on RTX 3050 hardware.\nWatch the CUDA canvas sprint ahead\nand finish before the CPU!",
-                 font=("Segoe UI", 8), fg=COLOR_TEXT, bg=COLOR_CARD, justify="left").pack(anchor="w")
+        btn_grid.columnconfigure(0, weight=1)
+        btn_grid.columnconfigure(1, weight=1)
 
         # -------------------------------------------------------------
         # PARTS 2 & 3: CPU Running Process Canvas (Partition 2 & 3)
@@ -719,6 +905,8 @@ class DualGameOfLifeApp(tk.Tk):
         cpu_frame = tk.Frame(body_container, bg=COLOR_PANEL, padx=10, pady=8,
                              highlightbackground=COLOR_CPU, highlightthickness=1)
         cpu_frame.grid(row=0, column=1, columnspan=2, sticky="nsew", padx=4)
+        self.cpu_frame = cpu_frame
+        cpu_frame.bind("<Configure>", self._on_frame_resize)
 
         # CPU Canvas Header
         cpu_top = tk.Frame(cpu_frame, bg=COLOR_PANEL)
@@ -737,7 +925,7 @@ class DualGameOfLifeApp(tk.Tk):
         self.cpu_canvas = tk.Canvas(cpu_frame, width=CANVAS_W, height=CANVAS_H,
                                     bg=COLOR_DEAD_CELL, highlightthickness=0,
                                     cursor="crosshair")
-        self.cpu_canvas.pack(padx=2, pady=2)
+        self.cpu_canvas.pack(padx=2, pady=2, expand=True)
 
         # Bind CPU canvas drawing
         self.cpu_canvas.bind("<Button-1>", lambda e: self._on_cpu_canvas_draw(e, 1, COLOR_CPU))
@@ -752,6 +940,7 @@ class DualGameOfLifeApp(tk.Tk):
                               highlightbackground=COLOR_CUDA if self.cuda_available else COLOR_DANGER,
                               highlightthickness=1)
         cuda_frame.grid(row=0, column=3, columnspan=2, sticky="nsew", padx=(4, 0))
+        self.cuda_frame = cuda_frame
 
         # CUDA Canvas Header
         cuda_top = tk.Frame(cuda_frame, bg=COLOR_PANEL)
@@ -771,7 +960,7 @@ class DualGameOfLifeApp(tk.Tk):
         self.cuda_canvas = tk.Canvas(cuda_frame, width=CANVAS_W, height=CANVAS_H,
                                      bg=COLOR_DEAD_CELL, highlightthickness=0,
                                      cursor="crosshair" if self.cuda_available else "arrow")
-        self.cuda_canvas.pack(padx=2, pady=2)
+        self.cuda_canvas.pack(padx=2, pady=2, expand=True)
 
         if self.cuda_available:
             self.cuda_canvas.bind("<Button-1>", lambda e: self._on_cuda_canvas_draw(e, 1, COLOR_CUDA))
@@ -781,63 +970,75 @@ class DualGameOfLifeApp(tk.Tk):
 
     # =========================================================================
     # 3. MERGED BOTTOM SECTION: Spanning the 4 Vertical Canvas Parts (Cols 1 to 4)
-    #    Single paragraph displaying iterations per unit time for CPU and CUDA,
-    #    with CPU in Cyan and CUDA in Emerald Green.
+    #    Real-Time Comparison Line Chart (Iterations/sec vs Elapsed Time)
+    #    with CPU Line in Blue and CUDA Line in Green.
     # =========================================================================
     def _build_merged_bottom_section(self):
         bottom_container = tk.Frame(self, bg=COLOR_BG_DARK)
-        bottom_container.pack(fill="x", padx=12, pady=(0, 10))
+        bottom_container.pack(fill="both", expand=True, padx=12, pady=(0, 8))
 
-        bottom_container.columnconfigure(0, weight=1, minsize=240)  # Settings column placeholder
-        bottom_container.columnconfigure(1, weight=4)              # Merged 4-part area
+        bottom_container.columnconfigure(0, weight=0, minsize=240)  # Settings column placeholder
+        bottom_container.columnconfigure(1, weight=1)              # Merged 4-part area: Col 1
+        bottom_container.columnconfigure(2, weight=1)              # Col 2
+        bottom_container.columnconfigure(3, weight=1)              # Col 3
+        bottom_container.columnconfigure(4, weight=1)              # Col 4
+        bottom_container.rowconfigure(0, weight=1)
 
         # Left auxiliary information card (under Settings)
-        aux_card = tk.Frame(bottom_container, bg=COLOR_PANEL, padx=12, pady=8,
+        aux_card = tk.Frame(bottom_container, bg=COLOR_PANEL, padx=12, pady=6,
                             highlightbackground=COLOR_BORDER, highlightthickness=1)
-        aux_card.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        aux_card.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
 
         tk.Label(aux_card, text="HARDWARE PROFILE", font=("Courier New", 8, "bold"),
                  fg=COLOR_MUTED, bg=COLOR_PANEL).pack(anchor="w")
         gpu_short = self.cuda_details if self.cuda_available else "Not Detected"
-        tk.Label(aux_card, text=f"• Host Cores: {os.cpu_count() or 4} Threads\n• CUDA Device: {gpu_short}",
+        tk.Label(aux_card, text=f"• Host Cores: {os.cpu_count() or 4} Threads\n• CUDA Device: {gpu_short}\n• Blue Line: CPU Speed\n• Green Line: CUDA GPU Speed\n• Responsive: Full Dynamic Scaling",
                  font=("Segoe UI", 8), fg=COLOR_TEXT, bg=COLOR_PANEL, justify="left").pack(anchor="w", pady=(2, 0))
 
         # Merged 4-part card spanning Columns 1, 2, 3, 4
-        merged_card = tk.Frame(bottom_container, bg=COLOR_PANEL, padx=14, pady=8,
+        merged_card = tk.Frame(bottom_container, bg=COLOR_PANEL, padx=12, pady=6,
                                highlightbackground=COLOR_BORDER, highlightthickness=1)
-        merged_card.grid(row=0, column=1, sticky="nsew", padx=(0, 0))
+        merged_card.grid(row=0, column=1, columnspan=4, sticky="nsew", padx=(0, 0))
 
-        # Title of Merged Section
+        # Title & Legend Row
         title_row = tk.Frame(merged_card, bg=COLOR_PANEL)
-        title_row.pack(fill="x", pady=(0, 4))
+        title_row.pack(fill="x", pady=(0, 2))
 
-        tk.Label(title_row, text="📊  PERFORMANCE TELEMETRY & SPEED ANALYSIS",
+        tk.Label(title_row, text="📈  COMPARISON LINE CHART (Iterations / Unit Time vs Time)",
                  font=("Courier New", 9, "bold"),
                  fg=COLOR_TEXT, bg=COLOR_PANEL).pack(side="left")
 
-        self.speedup_badge = tk.Label(title_row, text="Speedup Ratio: --",
+        # Live Chart Legends & Metrics Badges (Top Right of Chart Card)
+        legend_box = tk.Frame(title_row, bg=COLOR_PANEL)
+        legend_box.pack(side="right")
+
+        # CPU Legend (Blue)
+        tk.Label(legend_box, text="■ CPU:", font=("Segoe UI", 9, "bold"),
+                 fg=COLOR_CPU, bg=COLOR_PANEL).pack(side="left", padx=(0, 2))
+        self.chart_cpu_lbl = tk.Label(legend_box, text="0.0 iters/s", font=("Courier New", 9, "bold"),
+                                      fg=COLOR_CPU, bg=COLOR_PANEL)
+        self.chart_cpu_lbl.pack(side="left", padx=(0, 12))
+
+        # CUDA Legend (Green)
+        tk.Label(legend_box, text="■ CUDA:", font=("Segoe UI", 9, "bold"),
+                 fg=COLOR_CUDA, bg=COLOR_PANEL).pack(side="left", padx=(0, 2))
+        self.chart_cuda_lbl = tk.Label(legend_box, text="0.0 iters/s", font=("Courier New", 9, "bold"),
+                                       fg=COLOR_CUDA, bg=COLOR_PANEL)
+        self.chart_cuda_lbl.pack(side="left", padx=(0, 12))
+
+        # Speedup Ratio Badge
+        self.speedup_badge = tk.Label(legend_box, text="⚡ Speedup: --",
                                       font=("Segoe UI", 9, "bold"),
-                                      fg=COLOR_CUDA if self.cuda_available else COLOR_MUTED, bg=COLOR_PANEL)
-        self.speedup_badge.pack(side="right")
+                                      fg=COLOR_WARNING, bg=COLOR_PANEL)
+        self.speedup_badge.pack(side="left")
 
-        # Telemetry Paragraph Display (Rich Text with custom colored tags)
-        self.telemetry_text = tk.Text(merged_card, height=3, bg=COLOR_CARD,
-                                      relief="flat", wrap="word", padx=10, pady=6,
-                                      highlightthickness=1, highlightbackground=COLOR_BORDER)
-        self.telemetry_text.pack(fill="x")
-
-        # Tag configurations for colors
-        self.telemetry_text.tag_configure("normal", foreground=COLOR_TEXT, font=("Segoe UI", 9))
-        self.telemetry_text.tag_configure("bold", foreground=COLOR_TEXT, font=("Segoe UI", 9, "bold"))
-        self.telemetry_text.tag_configure("cpu", foreground=COLOR_CPU, font=("Segoe UI", 9, "bold"))
-        self.telemetry_text.tag_configure("cuda", foreground=COLOR_CUDA, font=("Segoe UI", 9, "bold"))
-        self.telemetry_text.tag_configure("danger", foreground=COLOR_DANGER, font=("Segoe UI", 9, "bold"))
-        self.telemetry_text.tag_configure("dim", foreground=COLOR_MUTED, font=("Segoe UI", 9, "italic"))
-        self.telemetry_text.config(state="disabled")
+        # The Real-Time Comparison Line Chart Canvas (Responsive with increased height)
+        self.chart = RealtimeComparisonChart(merged_card, height=185, bg="#0a0e17")
+        self.chart.pack(fill="both", expand=True, pady=(2, 4))
 
         # Real-time Visual Progress Bars for CPU & CUDA
         bars_frame = tk.Frame(merged_card, bg=COLOR_PANEL)
-        bars_frame.pack(fill="x", pady=(6, 0))
+        bars_frame.pack(fill="x", pady=(2, 0))
 
         style = ttk.Style()
         style.theme_use("default")
@@ -914,14 +1115,52 @@ class DualGameOfLifeApp(tk.Tk):
                 )
                 rect_matrix[r][c] = rect_id
 
+    def _on_frame_resize(self, event):
+        """Dynamically scale canvas cell size when window is enlarged."""
+        if not hasattr(self, "cpu_frame") or not self.cpu_frame:
+            return
+        frame_w = event.width
+        frame_h = event.height
+        if frame_w < 100 or frame_h < 100:
+            return
+        avail_w = frame_w - 24
+        avail_h = frame_h - 48
+        new_size = max(8, min(14, avail_w // self.cols, avail_h // self.rows))
+        if new_size != self.cell_size:
+            self._rescale_canvas_geometry(new_size)
+
+    def _rescale_canvas_geometry(self, new_cell_size):
+        """Update rectangle coordinates instantaneously when cell size changes on resize."""
+        self.cell_size = new_cell_size
+        cw = self.cols * self.cell_size
+        ch = self.rows * self.cell_size
+        self.cpu_canvas.config(width=cw, height=ch)
+        self.cuda_canvas.config(width=cw, height=ch)
+
+        for r in range(self.rows):
+            y0 = r * self.cell_size
+            y1 = y0 + self.cell_size - 1
+            for c in range(self.cols):
+                x0 = c * self.cell_size
+                x1 = x0 + self.cell_size - 1
+                if self._cpu_rects[r][c]:
+                    self.cpu_canvas.coords(self._cpu_rects[r][c], x0, y0, x1, y1)
+                if self.cuda_available and self._cuda_rects[r][c]:
+                    self.cuda_canvas.coords(self._cuda_rects[r][c], x0, y0, x1, y1)
+
+        if not self.cuda_available:
+            self._render_cuda_not_found_canvas()
+
     def _render_cuda_not_found_canvas(self):
         """Render prominent 'CUDA is not found' message directly in the CUDA canvas."""
         self.cuda_canvas.delete("all")
-        cx = CANVAS_W // 2
-        cy = CANVAS_H // 2
+        cw = self.cols * self.cell_size
+        ch = self.rows * self.cell_size
+        cx = cw // 2
+        cy = ch // 2
 
         self.cuda_canvas.create_rectangle(
-            20, 20, CANVAS_W - 20, CANVAS_H - 20,
+            20, 20, cw - 20, ch - 20,
             outline=COLOR_DANGER, width=2, dash=(6, 4)
         )
         self.cuda_canvas.create_text(
@@ -968,7 +1207,6 @@ class DualGameOfLifeApp(tk.Tk):
                 cell_color = color if val else COLOR_DEAD_CELL
                 self._cpu_rects[r][c] and self.cpu_canvas.itemconfig(self._cpu_rects[r][c], fill=cell_color)
                 self._update_all_stats()
-                self._update_telemetry_paragraph()
 
     def _on_cuda_canvas_draw(self, event, val, color):
         """Interactive drawing handler on CUDA canvas (syncs to GPU memory)."""
@@ -984,7 +1222,6 @@ class DualGameOfLifeApp(tk.Tk):
                 if self.cuda_engine.available:
                     self.cuda_engine.upload(self.cuda_grid)
                 self._update_all_stats()
-                self._update_telemetry_paragraph()
 
     # =========================================================================
     # SIMULATION CONTROLS & DECOUPLED ASYNCHRONOUS THREADING
@@ -1015,6 +1252,9 @@ class DualGameOfLifeApp(tk.Tk):
 
         if self.start_sim_time is None:
             self.start_sim_time = time.time()
+            self.chart.reset()
+            self.chart.add_point(0.0, 0.0, 0.0)
+
         self.last_perf_check = time.time()
         self.cpu_gen_counter = 0
         self.cuda_gen_counter = 0
@@ -1040,7 +1280,7 @@ class DualGameOfLifeApp(tk.Tk):
         self.btn_start.config(state="normal")
         self.btn_pause.config(state="disabled")
         self.btn_step.config(state="normal")
-        self._update_telemetry_paragraph()
+        self._update_all_stats()
 
     def _on_step(self):
         if self.running:
@@ -1067,7 +1307,6 @@ class DualGameOfLifeApp(tk.Tk):
                 self._update_canvas_incremental(self.cuda_canvas, self._cuda_rects, ch_cu, COLOR_CUDA)
 
         self._update_all_stats()
-        self._update_telemetry_paragraph()
 
     def _on_sync_grids(self):
         """Copy CPU grid to CUDA grid for identical starting state comparison."""
@@ -1077,7 +1316,6 @@ class DualGameOfLifeApp(tk.Tk):
                 self.cuda_engine.upload(self.cuda_grid)
             self._update_canvas_full(self.cuda_canvas, self._cuda_rects, self.cuda_grid, COLOR_CUDA)
         self._update_all_stats()
-        self._update_telemetry_paragraph()
 
     def _on_reset(self):
         self._on_pause()
@@ -1107,8 +1345,8 @@ class DualGameOfLifeApp(tk.Tk):
         else:
             self._render_cuda_not_found_canvas()
 
+        self.chart.reset()
         self._update_all_stats()
-        self._update_telemetry_paragraph()
 
     def _on_clear(self):
         self._on_pause()
@@ -1137,8 +1375,8 @@ class DualGameOfLifeApp(tk.Tk):
         else:
             self._render_cuda_not_found_canvas()
 
+        self.chart.reset()
         self._update_all_stats()
-        self._update_telemetry_paragraph()
 
     def _on_preset_selected(self, event=None):
         name = self.preset_var.get()
@@ -1178,8 +1416,8 @@ class DualGameOfLifeApp(tk.Tk):
         else:
             self._render_cuda_not_found_canvas()
 
+        self.chart.reset()
         self._update_all_stats()
-        self._update_telemetry_paragraph()
 
     # -------------------------------------------------------------------------
     # INDEPENDENT ASYNCHRONOUS SIMULATION WORKERS (CPU vs CUDA SPEED DIFFERENCE)
@@ -1203,7 +1441,6 @@ class DualGameOfLifeApp(tk.Tk):
         self.cpu_done = True
         if self.cpu_completion_time is None and self.start_sim_time:
             self.cpu_completion_time = time.time() - self.start_sim_time
-        self.after(0, self._check_both_complete)
 
     def _cuda_simulation_worker(self, target_iters):
         """
@@ -1246,7 +1483,6 @@ class DualGameOfLifeApp(tk.Tk):
         self.cuda_done = True
         if self.cuda_completion_time is None and self.start_sim_time:
             self.cuda_completion_time = time.time() - self.start_sim_time
-        self.after(0, self._check_both_complete)
 
     def _check_both_complete(self):
         """Check if both simulations have finished their target iterations."""
@@ -1256,10 +1492,9 @@ class DualGameOfLifeApp(tk.Tk):
             self.btn_pause.config(state="disabled")
             self.btn_step.config(state="normal")
             self._update_all_stats()
-            self._update_telemetry_paragraph()
 
     def _refresh_loop(self):
-        """Periodic performance calculation, double-buffered canvas rendering and stats loop."""
+        """Periodic performance calculation, double-buffered canvas rendering, chart plotting and stats loop."""
         # 1. Thread-safe canvas incremental rendering from pending buffers
         with self._lock:
             if self._pending_cpu_changed is not None:
@@ -1270,23 +1505,33 @@ class DualGameOfLifeApp(tk.Tk):
                 self._update_canvas_incremental(self.cuda_canvas, self._cuda_rects, self._pending_cuda_changed, COLOR_CUDA)
                 self._pending_cuda_changed = None
 
-        # 2. Performance metrics calculations
+        # 2. Check simulation completion safely on the main thread
+        if self.running and self.cpu_done and (self.cuda_done or not self.cuda_available):
+            self._check_both_complete()
+
+        # 3. Performance metrics calculations & Chart point addition
         now = time.time()
         dt = now - self.last_perf_check
-        if dt >= 0.4:
+        if dt >= 0.25:
             self.cpu_gps = self.cpu_gen_counter / dt
             self.cuda_gps = self.cuda_gen_counter / dt
             self.cpu_gen_counter = 0
             self.cuda_gen_counter = 0
             self.last_perf_check = now
+
+            if self.running and self.start_sim_time:
+                elapsed_t = now - self.start_sim_time
+                self.chart.add_point(elapsed_t, self.cpu_gps, self.cuda_gps)
+                if self.cuda_done and self.cuda_completion_time and self.chart.cuda_completed_at is None:
+                    self.chart.mark_cuda_completed(self.cuda_completion_time)
+
             if self.running or self.cpu_gen > 0 or self.cuda_gen > 0:
                 self._update_all_stats()
-                self._update_telemetry_paragraph()
 
         self.after(FRAME_MS, self._refresh_loop)
 
     # =========================================================================
-    # STATS & TELEMETRY UPDATES
+    # STATS UPDATES
     # =========================================================================
     def _update_all_stats(self):
         target = self.sim_target_iters
@@ -1313,65 +1558,26 @@ class DualGameOfLifeApp(tk.Tk):
         else:
             self.cuda_live_badge.config(text="CUDA NOT FOUND")
 
+        # Update Live Chart Legend Labels
+        self.chart_cpu_lbl.config(text=f"{self.cpu_gps:.1f} iters/s")
+        if self.cuda_available:
+            self.chart_cuda_lbl.config(text=f"{self.cuda_gps:.1f} iters/s")
+            if self.cpu_gps > 0 and self.cuda_gps > 0:
+                ratio = self.cuda_gps / self.cpu_gps
+                self.speedup_badge.config(text=f"⚡ Speedup: {ratio:.1f}x", fg=COLOR_CUDA)
+            elif self.cuda_done and self.cuda_completion_time:
+                self.speedup_badge.config(text=f"⚡ Finished in {self.cuda_completion_time:.2f}s", fg=COLOR_SUCCESS)
+            else:
+                self.speedup_badge.config(text="⚡ Accelerated", fg=COLOR_WARNING)
+        else:
+            self.chart_cuda_lbl.config(text="OFFLINE", fg=COLOR_DANGER)
+            self.speedup_badge.config(text="CUDA Offline", fg=COLOR_DANGER)
+
         # Progress bars
         cpu_pct = (self.cpu_gen / target * 100) if target > 0 else 0
         cuda_pct = (self.cuda_gen / target * 100) if (target > 0 and self.cuda_available) else 0
         self.cpu_prog_var.set(min(cpu_pct, 100.0))
         self.cuda_prog_var.set(min(cuda_pct, 100.0))
-
-    def _update_telemetry_paragraph(self):
-        """
-        Dynamically construct and style the merged performance telemetry paragraph.
-        Displays iterations per unit time for both CPU and CUDA,
-        with CPU in Electric Cyan and CUDA in Emerald Green.
-        """
-        target = self.sim_target_iters
-        total_cells = self.rows * self.cols
-        cpu_updates = (self.cpu_gps * total_cells) / 1e6
-        cuda_updates = (self.cuda_gps * total_cells) / 1e6
-
-        # Ratio calculation
-        if self.cpu_gps > 0 and self.cuda_gps > 0:
-            ratio = self.cuda_gps / self.cpu_gps
-            ratio_text = f"{ratio:.1f}x Speedup"
-        elif self.cuda_done and self.cuda_completion_time:
-            ratio_text = f"CUDA Finished in {self.cuda_completion_time:.2f}s"
-        else:
-            ratio_text = "Accelerated"
-
-        self.speedup_badge.config(text=f"⚡ GPU Advantage: {ratio_text}" if self.cuda_available else "CUDA Offline")
-
-        # Construct Rich Text Paragraph
-        self.telemetry_text.config(state="normal")
-        self.telemetry_text.delete("1.0", "end")
-
-        self.telemetry_text.insert("end", "⚡ Real-Time HPC Comparison: ", "bold")
-        self.telemetry_text.insert("end", f"Simulating {target:,} generations across {total_cells:,} cells. ")
-
-        # CPU segment in CPU Color
-        self.telemetry_text.insert("end", "CPU Engine", "cpu")
-        self.telemetry_text.insert("end", " is at ")
-        self.telemetry_text.insert("end", f"Gen {self.cpu_gen:,} ({self.cpu_gen/target*100:.0f}%)", "cpu")
-        self.telemetry_text.insert("end", " running at ")
-        self.telemetry_text.insert("end", f"{self.cpu_gps:.1f} iterations/sec", "cpu")
-        self.telemetry_text.insert("end", f" ({cpu_updates:.2f} MUpdates/s). ")
-
-        # CUDA segment in CUDA Color
-        if self.cuda_available:
-            self.telemetry_text.insert("end", "Meanwhile, the ", "normal")
-            self.telemetry_text.insert("end", "CUDA Engine", "cuda")
-            self.telemetry_text.insert("end", " is at ")
-            self.telemetry_text.insert("end", f"Gen {self.cuda_gen:,} ({self.cuda_gen/target*100:.0f}%)", "cuda")
-            self.telemetry_text.insert("end", " accelerating at ")
-            self.telemetry_text.insert("end", f"{self.cuda_gps:.1f} iterations/sec", "cuda")
-            self.telemetry_text.insert("end", f" ({cuda_updates:.2f} MUpdates/s) on {self.cuda_details}.")
-            if self.cuda_done and not self.cpu_done:
-                self.telemetry_text.insert("end", f" [CUDA completed first in {self.cuda_completion_time:.2f}s!]", "cuda")
-        else:
-            self.telemetry_text.insert("end", "CUDA Engine: ", "danger")
-            self.telemetry_text.insert("end", "CUDA is not found on this system. GPU canvas is offline.", "dim")
-
-        self.telemetry_text.config(state="disabled")
 
     def _on_close(self):
         """Safe thread and CUDA context shutdown on window close."""
