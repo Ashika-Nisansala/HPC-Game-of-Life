@@ -155,38 +155,63 @@ def run_cpp_demo():
 
 
 def run_cuda_benchmark(size=2000, iters=100):
-    """Compile and run CUDA GPU benchmark."""
-    src = REPO_ROOT / "cuda" / "game_of_life_cuda.cu"
-    if not src.exists():
-        print(f"[!] Error: Source file not found: {src}")
+    """Compile and run CUDA GPU benchmark via nvcc or direct native CUDA Driver Engine."""
+    from gui.game_of_life_gui import CudaDriverEngine
+
+    # Try nvcc compilation first if available
+    if check_tool("nvcc"):
+        src = REPO_ROOT / "cuda" / "game_of_life_cuda.cu"
+        if src.exists():
+            build_dir = ensure_build_dir()
+            exe = build_dir / ("cuda_benchmark.exe" if os.name == "nt" else "cuda_benchmark")
+            print(f"[*] Compiling {src.name} with nvcc (-O3)...")
+            comp_res = subprocess.run(["nvcc", "-O3", str(src), "-o", str(exe)], capture_output=True, text=True)
+            if comp_res.returncode == 0:
+                print(f"[*] Running CUDA Benchmark ({size}x{size}, {iters} iterations)...")
+                run_res = subprocess.run([str(exe), str(size), str(iters)], capture_output=True, text=True)
+                if run_res.returncode == 0:
+                    print(run_res.stdout.strip())
+                    return {"output": run_res.stdout}
+
+    # If nvcc is not available, run via direct native CUDA Driver Engine
+    print("[*] Initializing Native CUDA Driver Engine on NVIDIA GPU...")
+    engine = CudaDriverEngine(size, size)
+    if not engine.available:
+        print("\n[!] NVIDIA CUDA is not available on this system.")
+        print("    1. Ensure an NVIDIA GPU is installed.")
+        print("    2. Ensure NVIDIA GPU Display Driver is installed.")
         return None
 
-    if not check_tool("nvcc"):
-        print("\n[!] NVIDIA CUDA Compiler ('nvcc') was not found in PATH.")
-        print("    To run GPU acceleration:")
-        print("    1. Ensure an NVIDIA GPU is present.")
-        print("    2. Install NVIDIA CUDA Toolkit (https://developer.nvidia.com/cuda-downloads).")
-        print("    3. Add nvcc to your system environment PATH.")
-        return None
+    print(f"[*] Executing Native CUDA Benchmark on {engine.gpu_name} ({size}x{size}, {iters} iterations)...")
+    total_cells = size * size
 
-    build_dir = ensure_build_dir()
-    exe = build_dir / ("cuda_benchmark.exe" if os.name == "nt" else "cuda_benchmark")
+    # Zero or random fill device buffer
+    engine.cuda.cuMemsetD32_v2(engine.d_curr, 1, total_cells)
 
-    print(f"[*] Compiling {src.name} with nvcc (-O3)...")
-    comp_cmd = ["nvcc", "-O3", str(src), "-o", str(exe)]
-    comp_res = subprocess.run(comp_cmd, capture_output=True, text=True)
-    if comp_res.returncode != 0:
-        print(f"[!] CUDA Compilation failed:\n{comp_res.stderr}")
-        return None
+    engine.bind_thread()
+    start_t = time.perf_counter()
+    for _ in range(iters):
+        engine.step()
 
-    print(f"[*] Running CUDA Benchmark ({size}x{size}, {iters} iterations)...")
-    run_res = subprocess.run([str(exe), str(size), str(iters)], capture_output=True, text=True)
-    if run_res.returncode != 0:
-        print(f"[!] CUDA execution failed:\n{run_res.stderr}")
-        return None
+    # Synchronize GPU completion
+    engine.cuda.cuCtxSynchronize()
+    elapsed = time.perf_counter() - start_t
 
-    print(run_res.stdout.strip())
-    return {"output": run_res.stdout}
+    mega_updates = (total_cells * iters) / (elapsed * 1e6)
+    gps = iters / elapsed
+
+    output = f"""===== CUDA GAME OF LIFE (Direct GPU Driver) =====
+Device: {engine.gpu_name}
+Grid Size: {size} x {size}
+Iterations: {iters}
+Block Size: 16 x 16 (2D Thread Block)
+GPU Execution Time: {elapsed:.4f} seconds
+Throughput: {mega_updates:.2f} MegaUpdates/sec
+Generations/sec: {gps:.2f}"""
+
+    print(output)
+    engine.close()
+    return {"output": output, "wall_time": elapsed}
 
 
 def run_comparison(size=1000, iters=100):
@@ -232,7 +257,9 @@ def run_comparison(size=1000, iters=100):
         })
 
     # 3. CUDA GPU (if available)
-    if check_tool("nvcc"):
+    from gui.game_of_life_gui import check_cuda_availability
+    cuda_avail, _, gpu_desc = check_cuda_availability()
+    if cuda_avail:
         print("\n" + "=" * 55)
         cu_res = run_cuda_benchmark(size=size, iters=iters)
         if cu_res:
