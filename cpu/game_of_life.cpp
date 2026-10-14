@@ -1,8 +1,8 @@
 #include <iostream>
 using namespace std;
 
-const int ROWS = 2000;
-const int COLS = 2000;
+const int ROWS = 5;
+const int COLS = 5;
 
 // Print the grid
 void printGrid(int grid[ROWS][COLS])
